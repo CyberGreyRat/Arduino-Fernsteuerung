@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Arduino Flug Visualisierung (GLB)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1a1a1a; color: white; font-family: 'Segoe UI', sans-serif; }
+        #ui-container { position: absolute; top: 20px; left: 20px; z-index: 10; background: rgba(0, 0, 0, 0.7); padding: 20px; border-radius: 10px; min-width: 250px; }
+        button { background: #0078d7; color: white; border: none; padding: 10px 20px; font-size: 16px; cursor: pointer; border-radius: 5px; width: 100%; }
+        button:hover { background: #0063b1; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        
+        .stat-row { display: flex; justify-content: space-between; margin-top: 10px; font-size: 14px; }
+        .val { font-weight: bold; font-family: monospace; font-size: 16px; }
+        
+        #gas-container { margin-top: 20px; width: 100%; height: 30px; background: #333; border-radius: 15px; overflow: hidden; border: 2px solid #555; position: relative; }
+        #gas-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #4CAF50, #FFC107, #F44336); transition: width 0.1s linear; }
+        #gas-label { position: absolute; width: 100%; text-align: center; top: 5px; font-weight: bold; text-shadow: 1px 1px 2px black; }
+
+        #mode-indicator { margin-top: 15px; padding: 10px; text-align: center; font-weight: bold; border-radius: 5px; background: #444; transition: background 0.3s; }
+        .mode-joy { background: #0078d7 !important; }
+        .mode-gyro { background: #ff9800 !important; color: black; }
+
+        #status { margin-top: 10px; font-size: 12px; color: #aaa; text-align: center;}
+        #loading { color: yellow; font-size: 12px; margin-top: 5px; display: none; }
+    </style>
+    
+    <!-- Import Map für saubere Module (Three.js + Loader) -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+<div id="ui-container">
+    <h2>📡 Flug Telemetrie</h2>
+    <button id="connectBtn">🔌 Mit Arduino verbinden</button>
+    <div id="status">Nicht verbunden</div>
+    <div id="loading">Lade 3D Modell...</div>
+
+    <div id="mode-indicator" class="mode-joy">MODUS: WARTEN</div>
+
+    <div class="stat-row"><span>Roll (X):</span> <span id="val-roll" class="val">127</span></div>
+    <div class="stat-row"><span>Pitch (Y):</span> <span id="val-pitch" class="val">127</span></div>
+    
+    <div id="gas-container">
+        <div id="gas-fill"></div>
+        <div id="gas-label">GAS: 0%</div>
+    </div>
+</div>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    // --- 3D SETUP ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x222222); // Dunkelgrau
+    // Optional: Nebel für Tiefe
+    scene.fog = new THREE.Fog(0x222222, 10, 50);
+    
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    // HIER GEÄNDERT: Höher (4) und weiter weg (8)
+    camera.position.set(0, 4, 8); 
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    // Schatten aktivieren für mehr Realismus
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    // --- LICHT ---
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); 
+    scene.add(ambientLight);
+    
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    dirLight.position.set(5, 10, 7);
+    dirLight.castShadow = true;
+    scene.add(dirLight);
+
+    // --- BODEN (Gitter) ---
+    const gridHelper = new THREE.GridHelper(50, 50, 0x444444, 0x333333);
+    gridHelper.position.y = -2;
+    scene.add(gridHelper);
+
+    // --- 3D MODELL LADEN ---
+    let airplane; // Hier speichern wir das geladene Modell
+    const loader = new GLTFLoader();
+    const loadingElem = document.getElementById('loading');
+    
+    loadingElem.style.display = 'block';
+
+    loader.load(
+        './plane2.glb', // Pfad zur Datei im selben Ordner
+        function (gltf) {
+            airplane = gltf.scene;
+            
+            // Modell etwas skalieren, falls es zu groß/klein ist
+            airplane.scale.set(1, 1, 1); 
+            
+            // Schattenwurf aktivieren
+            airplane.traverse((node) => {
+                if (node.isMesh) {
+                    node.castShadow = true;
+                    node.receiveShadow = true;
+                }
+            });
+
+            scene.add(airplane);
+            loadingElem.style.display = 'none';
+            console.log("Modell geladen!");
+        },
+        undefined,
+        function (error) {
+            console.error(error);
+            loadingElem.innerText = "Fehler beim Laden (CORS? Siehe Konsole)";
+            loadingElem.style.color = "red";
+        }
+    );
+
+    // --- RENDER LOOP ---
+    function animate() {
+        requestAnimationFrame(animate);
+        renderer.render(scene, camera);
+    }
+    animate();
+
+    // Resize Handler
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // --- SERIAL API LOGIK ---
+    let port;
+    const connectBtn = document.getElementById('connectBtn');
+    const statusDiv = document.getElementById('status');
+    const modeDiv = document.getElementById('mode-indicator');
+    const gasFill = document.getElementById('gas-fill');
+    const gasLabel = document.getElementById('gas-label');
+    const valRoll = document.getElementById('val-roll');
+    const valPitch = document.getElementById('val-pitch');
+
+    connectBtn.addEventListener('click', async () => {
+        if ("serial" in navigator) {
+            try {
+                port = await navigator.serial.requestPort();
+                await port.open({ baudRate: 115200 });
+                statusDiv.innerText = "Verbunden!";
+                statusDiv.style.color = "#4CAF50";
+                connectBtn.disabled = true;
+                readSerial();
+            } catch (err) {
+                console.error(err);
+                statusDiv.innerText = "Fehler: " + err;
+            }
+        } else {
+            alert("Web Serial API nicht unterstützt. Bitte benutze Chrome, Edge oder Opera.");
+        }
+    });
+
+    async function readSerial() {
+        const textDecoder = new TextDecoderStream();
+        const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+        const reader = textDecoder.readable.getReader();
+        let buffer = "";
+
+        try {
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += value;
+                
+                let lines = buffer.split('\n');
+                buffer = lines.pop(); 
+
+                for (const line of lines) {
+                    parseData(line.trim());
+                }
+            }
+        } catch (error) {
+            console.error(error);
+        }
+    }
+
+    function parseData(jsonStr) {
+        try {
+            if (!jsonStr.startsWith('{') || !jsonStr.endsWith('}')) return;
+            const data = JSON.parse(jsonStr);
+            
+            // UI Update
+            valRoll.innerText = data.r;
+            valPitch.innerText = data.p;
+            
+            let gasPercent = Math.round((data.g / 255) * 100);
+            gasFill.style.width = gasPercent + "%";
+            gasLabel.innerText = "GAS: " + gasPercent + "%";
+
+            // Modus Anzeige
+            if (data.m === "GYRO") {
+                modeDiv.innerText = "MODUS: GYRO / HAND";
+                modeDiv.className = "mode-gyro";
+            } else {
+                modeDiv.innerText = "MODUS: JOYSTICK";
+                modeDiv.className = "mode-joy";
+            }
+
+            // 3D Rotation auf das GLB Modell anwenden (falls geladen)
+            if (airplane) {
+                let rollNorm = (data.r - 127); 
+                let pitchNorm = (data.p - 127);
+                const sensitivity = 0.015; 
+
+                // Z = Rollen, X = Neigen (Standard Three.js Koordinaten)
+                // Lerp für weiche Bewegung
+                airplane.rotation.z = THREE.MathUtils.lerp(airplane.rotation.z, -rollNorm * sensitivity, 0.1);
+                airplane.rotation.x = THREE.MathUtils.lerp(airplane.rotation.x, pitchNorm * sensitivity, 0.1);
+                
+                // Optional: Gas steuert Propeller Rotation (falls Mesh zugreifbar wäre)
+                // Oder wir neigen das Flugzeug leicht nach vorne beim Beschleunigen
+            }
+
+        } catch (e) {
+            // Ignoriere Fehler
+        }
+    }
+</script>
+
+</body>
+</html>
